@@ -193,10 +193,6 @@ public unsafe static class Test
 
 		EGL.SwapBuffers(display, surface);
 
-		EGL.DestroyContext(display, context);
-		EGL.DestroySurface(display, surface);
-		EGL.Terminate(display);
-
 		// https://github.com/emepetres/dotnet-wasm-sample/blob/main/src/jsinteraction/wasm/WebAssemblyRuntime.cs
 		using var runtime = new MyRuntime();
 		runtime.InvokeVoid("initialize");
