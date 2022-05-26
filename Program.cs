@@ -10,10 +10,12 @@ using System.Threading.Tasks;
 
 namespace WasmTest;
 
-internal class MyRuntime : WebAssemblyJSRuntime
+internal unsafe class MyRuntime : WebAssemblyJSRuntime
 {
+
 	public MyRuntime()
 	{
+		
 	}
 }
 
@@ -105,37 +107,31 @@ public unsafe static class Test
 {
 	private static IntPtr display, surface;
 
+	const string vertexShaderSource = @"#version 300 es
+		precision highp float;
+		layout (location = 0) in vec4 Position0;
+		layout (location = 1) in vec4 Color0;
+		out vec4 color;
+		void main()
+		{    
+			gl_Position = Position0;	
+			color = Color0;
+		}";
+
+	const string fragmentShaderSource = @"#version 300 es
+		precision highp float;
+		in vec4 color;
+		out vec4 fragColor;
+		void main() 
+		{    	 	 	
+			fragColor = color;	 	
+		}";
+
 	[JSInvokable("frame")]
 	public static void Frame(double time)
 	{
 		GL.glClearColor(1.0f, 1.0f * 0.35f, 0f, 1.0f);
 		GL.glClear((uint)AttribMask.ColorBufferBit);
-
-		uint vaoID = 0;
-		GL.glGenVertexArrays(1,&vaoID);
-
-		uint vboID = 0;
-		GL.glGenBuffers(1, &vboID);
-
-		GL.glBindVertexArray(vaoID);
-		GL.glBindBuffer(BufferTargetARB.ArrayBuffer, vboID);
-
-		float[] vertices = {
-			 0.0f,  0.5f, 0.0f,
-		     0.5f, -0.5f, 0.0f,
-			-0.5f, -0.5f, 0.0f
-		};
-
-		fixed (float* vertices_ptr = &vertices[0])
-		{
-			GL.glBufferData(BufferTargetARB.ArrayBuffer, vertices.Length * sizeof(float), vertices_ptr, BufferUsageARB.StaticDraw);
-		}
-
-		int stride = 3 * sizeof(float);
-		GL.glEnableVertexAttribArray(0);
-		GL.glVertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, stride, (void*)0);
-
-		GL.glDrawArrays(PrimitiveType.Triangles, 0, 3);
 	}
 
 	public static int Main(string[] args)
@@ -196,6 +192,94 @@ public unsafe static class Test
 		// https://github.com/emepetres/dotnet-wasm-sample/blob/main/src/jsinteraction/wasm/WebAssemblyRuntime.cs
 		using var runtime = new MyRuntime();
 		runtime.InvokeVoid("initialize");
+
+		uint vertexShader = GL.glCreateShader(ShaderType.VertexShader);
+
+		IntPtr* textPtr = stackalloc IntPtr[1];
+		var lengthArray = stackalloc int[1];
+
+		lengthArray[0] = vertexShaderSource.Length;
+		textPtr[0] = Marshal.StringToHGlobalAnsi(vertexShaderSource);
+
+		GL.glShaderSource(vertexShader, 1, (IntPtr)textPtr, lengthArray);
+		GL.glCompileShader(vertexShader);
+		// checkErrors
+		int success = 0;
+		var infoLog = stackalloc char[512];
+		lengthArray[0] = success;
+		GL.glGetShaderiv(vertexShader, ShaderParameterName.CompileStatus, lengthArray);
+		if (success > 0)
+		{
+			GL.glGetShaderInfoLog(vertexShader, 512, (int*)0, infoLog);
+			Console.WriteLine($"Error: shader vertex compilation failed: {new string(infoLog)}");
+		}
+
+		uint fragmentShader = GL.glCreateShader(ShaderType.FragmentShader);
+
+		lengthArray[0] = fragmentShaderSource.Length;
+		textPtr[0] = Marshal.StringToHGlobalAnsi(fragmentShaderSource);
+		GL.glShaderSource(fragmentShader, 1, (IntPtr)textPtr, lengthArray);
+		GL.glCompileShader(fragmentShader);
+		// checkErrors
+		lengthArray[0] = success;
+		GL.glGetShaderiv(fragmentShader, ShaderParameterName.CompileStatus, lengthArray);
+		if (success > 0)
+		{
+			GL.glGetShaderInfoLog(fragmentShader, 512, (int*)0, infoLog);
+			Console.WriteLine($"Error: shader fragment compilation failed: {new string(infoLog)}");
+		}
+
+		uint shaderProgram = GL.glCreateProgram();
+		GL.glAttachShader(shaderProgram, vertexShader);
+		GL.glAttachShader(shaderProgram, fragmentShader);
+		GL.glLinkProgram(shaderProgram);
+		// checkErrors
+		lengthArray[0] = success;
+		GL.glGetProgramiv(shaderProgram, ProgramPropertyARB.LinkStatus, lengthArray);
+		if (success > 0)
+		{
+			GL.glGetProgramInfoLog(shaderProgram, 512, (int*)0, infoLog);
+			Console.WriteLine($"Error: shader program compilation failed: {new string(infoLog)}");
+		}
+
+		GL.glDeleteShader(vertexShader);
+		GL.glDeleteShader(fragmentShader);
+
+		float[] vertices = {
+			0f, 0.5f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 1.0f,
+			0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 1.0f,
+			-0.5f, -0.5f, 0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f
+		};
+
+		uint VBO = 0;
+		uint VAO = 0;
+		GL.glGenVertexArrays(1, &VAO);
+		GL.glGenBuffers(1, &VBO);
+
+		GL.glBindVertexArray(VAO);
+		GL.glBindBuffer(BufferTargetARB.ArrayBuffer, VBO);
+
+		fixed (float* verticesPtr = &vertices[0])
+		{
+			GL.glBufferData(BufferTargetARB.ArrayBuffer, vertices.Length * sizeof(float), verticesPtr, BufferUsageARB.StaticDraw);
+		}
+
+		int stride = 8 * sizeof(float);
+		GL.glVertexAttribPointer(0, 4, VertexAttribPointerType.Float, false, stride, (void*)null);
+		GL.glEnableVertexAttribArray(0);
+
+		GL.glVertexAttribPointer(1, 4, VertexAttribPointerType.Float, false, stride, (void*)16);
+		GL.glEnableVertexAttribArray(1);
+
+		GL.glBindBuffer(BufferTargetARB.ArrayBuffer, 0);
+
+		GL.glBindVertexArray(0);
+
+		GL.glUseProgram(shaderProgram);
+		GL.glBindVertexArray(VAO);
+		GL.glDrawArrays(PrimitiveType.Triangles, 0, 3);
+
+		EGL.SwapBuffers(display, surface);
 
 		return args.Length;
 	}
